@@ -50,9 +50,9 @@
 
       <div class="flex-1 overflow-y-auto space-y-5 pr-2">
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Secret Google Calendar iCal URL (.ics)</label>
-          <input id="cfg-url" type="text" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
-          <p class="text-xs text-slate-500 mt-1">Paste your "Secret address in iCal format" from Google Calendar settings.</p>
+          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Google Calendar Secret iCal URL(s)</label>
+          <textarea id="cfg-url" rows="3" placeholder="Paste your Secret address in iCal format here (one per line if multiple)" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-100 focus:outline-none focus:border-blue-500"></textarea>
+          <p class="text-xs text-slate-500 mt-1">If you have both a Crew calendar and an Outlook/Vendor calendar, paste both here (one per line).</p>
         </div>
 
         <div>
@@ -81,7 +81,7 @@
       { name: "Joseph", keywords: "joseph", color: "#10b981" },
       { name: "Sam", keywords: "sam", color: "#f43f5e" },
       { name: "Willy", keywords: "willy", color: "#3b82f6" },
-      { name: "84 / Pickup", keywords: "84, p/u, pickup, delivery, bower, christie", color: "#d97706" }
+      { name: "84 / Pickup", keywords: "84, p/u, pickup, delivery, bower, christie, furls", color: "#d97706" }
     ];
 
     let config = {
@@ -157,6 +157,29 @@
       return { name: "General", color: "#475569" };
     }
 
+    async function fetchWithProxies(targetUrl) {
+      const cleanUrl = targetUrl.replace(/^webcal:\/\//i, "https://");
+      const proxies = [
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`,
+        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`
+      ];
+
+      for (const p of proxies) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          const res = await fetch(p, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const txt = await res.text();
+            if (txt && txt.includes("BEGIN:VCALENDAR")) return txt;
+          }
+        } catch(e) {}
+      }
+      throw new Error("Proxy timeout");
+    }
+
     async function fetchCalendar() {
       const status = document.getElementById("sync-status");
       if (!config.feedUrl) {
@@ -170,42 +193,31 @@
       status.className = "text-slate-400 font-medium";
 
       try {
-        const targetUrl = config.feedUrl.replace(/^webcal:\/\//i, "https://");
-        
-        // Multi-proxy fallback for fetching the raw iCal feed
-        const proxies = [
-          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-          `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
-        ];
+        const urls = config.feedUrl.split(/\n|,/).map(u => u.trim()).filter(Boolean);
+        let combinedEvents = [];
 
-        let rawIcs = "";
-        for (const proxy of proxies) {
+        for (const u of urls) {
           try {
-            const res = await fetch(proxy);
-            if (res.ok) {
-              const text = await res.text();
-              if (text && text.includes("BEGIN:VCALENDAR")) {
-                rawIcs = text;
-                break;
-              }
-            }
-          } catch(e) {
-            console.warn("Proxy attempt failed:", proxy, e);
+            const rawIcs = await fetchWithProxies(u);
+            const events = parseICS(rawIcs);
+            combinedEvents = combinedEvents.concat(events);
+          } catch(err) {
+            console.warn("Feed fetch failed:", u, err);
           }
         }
 
-        if (!rawIcs) throw new Error("Could not retrieve calendar data");
+        if (combinedEvents.length === 0) {
+          throw new Error("Failed to fetch feeds");
+        }
 
-        const events = parseICS(rawIcs);
-        populateBoard(events);
+        populateBoard(combinedEvents);
         const now = new Date();
         status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         status.className = "text-emerald-400 font-medium";
       } catch (err) {
         console.error("Sync Error:", err);
-        status.textContent = "Sync error (Verify Secret .ics link)";
-        status.className = "text-rose-400 font-medium";
+        status.textContent = `Sync warning (${err.message}). Retrying...`;
+        status.className = "text-amber-400 font-medium";
       }
     }
 
@@ -254,16 +266,26 @@
 
     function parseDate(icsStr) {
       if (!icsStr) return new Date(NaN);
+      // All day date: YYYYMMDD
       if (icsStr.length === 8) {
-        return new Date(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2));
+        return new Date(
+          parseInt(icsStr.substr(0,4)),
+          parseInt(icsStr.substr(4,2)) - 1,
+          parseInt(icsStr.substr(6,2)),
+          12, 0, 0 // Anchor midday to prevent date rolling backwards
+        );
       }
-      return new Date(Date.UTC(
-        parseInt(icsStr.substr(0,4)),
-        parseInt(icsStr.substr(4,2))-1,
-        parseInt(icsStr.substr(6,2)),
-        parseInt(icsStr.substr(9,2) || 0),
-        parseInt(icsStr.substr(11,2) || 0)
-      ));
+      // Timed date
+      const y = parseInt(icsStr.substr(0,4));
+      const m = parseInt(icsStr.substr(4,2)) - 1;
+      const d = parseInt(icsStr.substr(6,2));
+      const hr = parseInt(icsStr.substr(9,2) || 0);
+      const min = parseInt(icsStr.substr(11,2) || 0);
+
+      if (icsStr.endsWith("Z")) {
+        return new Date(Date.UTC(y, m, d, hr, min));
+      }
+      return new Date(y, m, d, hr, min);
     }
 
     function populateBoard(events) {
@@ -342,7 +364,7 @@
       });
     }
 
-    setInterval(fetchCalendar, 5 * 60 * 1000);
+    setInterval(fetchCalendar, 3 * 60 * 1000);
     renderLegend();
     fetchCalendar();
   </script>
