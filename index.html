@@ -50,9 +50,9 @@
 
       <div class="flex-1 overflow-y-auto space-y-5 pr-2">
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Google Calendar Secret / Public iCal URL (.ics)</label>
-          <input id="cfg-ics" type="text" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
-          <p class="text-xs text-slate-500 mt-1">Must be an .ics address (secret address or public address in iCal format).</p>
+          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Google Apps Script Web App URL or .ics link</label>
+          <input id="cfg-ics" type="text" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
+          <p class="text-xs text-slate-500 mt-1">Paste your Google Script web app link or direct .ics feed here.</p>
         </div>
 
         <div>
@@ -65,10 +65,7 @@
       </div>
 
       <div class="pt-4 mt-4 border-t border-slate-800 flex justify-between items-center">
-        <button onclick="loadSampleEvents()" class="text-xs text-slate-400 hover:text-slate-200 underline">
-          Load Sample Data
-        </button>
-        <div class="flex gap-3">
+        <div class="flex gap-3 ml-auto">
           <button onclick="toggleModal(false)" class="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancel</button>
           <button onclick="saveAndSync()" class="px-5 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow-lg shadow-blue-600/30">
             Save &amp; Sync Now
@@ -80,11 +77,11 @@
 
   <script>
     const DEFAULT_USERS = [
-      { name: "Jesse", keywords: "jesse", color: "#3b82f6" },
-      { name: "Crew 1", keywords: "crew 1, crew a, framing", color: "#10b981" },
-      { name: "Crew 2", keywords: "crew 2, crew b, deck", color: "#a855f7" },
-      { name: "Vendor Pickup", keywords: "pickup, pick up, will call, runner", color: "#f97316" },
-      { name: "Delivery", keywords: "delivery, drop off, drop-off", color: "#eab308" }
+      { name: "Joe", keywords: "joe", color: "#a855f7" },
+      { name: "Joseph", keywords: "joseph", color: "#10b981" },
+      { name: "Sam", keywords: "sam", color: "#f43f5e" },
+      { name: "Willy", keywords: "willy", color: "#3b82f6" },
+      { name: "84 / Pickup", keywords: "84, p/u, pickup", color: "#d97706" }
     ];
 
     let config = {
@@ -92,7 +89,6 @@
       users: JSON.parse(localStorage.getItem("dispatch_users") || "null") || DEFAULT_USERS
     };
 
-    // Clock
     function updateClock() {
       const now = new Date();
       document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -160,97 +156,11 @@
       }
       return { name: "General", color: "#475569" };
     }
-    
-    // Robust CORS Proxies
-    async function fetchWithProxies(targetUrl) {
-      let cleanUrl = targetUrl.trim().replace(/^webcal:\/\//i, "https://");
-      
-      const proxies = [
-        (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-        (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
-        (u) => `https://cors-anywhere.herokuapp.com/${u}`
-      ];
-
-      let lastError = null;
-      for (const getProxyUrl of proxies) {
-        try {
-          const proxyUrl = getProxyUrl(cleanUrl);
-          const res = await fetch(proxyUrl);
-          if (res.ok) {
-            const text = await res.text();
-            if (text && text.includes("BEGIN:VCALENDAR")) {
-              return text;
-            }
-          }
-        } catch (e) {
-          lastError = e;
-          console.warn("Proxy attempt failed:", e);
-        }
-      }
-      throw lastError || new Error("Unable to fetch iCal feed through proxy rotation.");
-    }
-
-    // Basic ICS Parser
-    function parseICS(data) {
-      const events = [];
-      const lines = data.split(/\r\n|\n|\r/);
-      let inEvent = false;
-      let cur = {};
-
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        while (i + 1 < lines.length && (lines[i + 1].startsWith(" ") || lines[i + 1].startsWith("\t"))) {
-          line += lines[i + 1].substring(1);
-          i++;
-        }
-
-        if (line === "BEGIN:VEVENT") {
-          inEvent = true;
-          cur = {};
-        } else if (line === "END:VEVENT") {
-          if (cur.dtstart && cur.summary) events.push(cur);
-          inEvent = false;
-        } else if (inEvent) {
-          const [keyPart, ...valParts] = line.split(":");
-          const val = valParts.join(":");
-          const key = keyPart.split(";")[0];
-
-          if (key === "SUMMARY") cur.summary = val.replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\n/g, " ");
-          if (key === "LOCATION") cur.location = val.replace(/\\,/g, ",").replace(/\\;/g, ";").replace(/\\n/g, " ");
-          if (key === "DTSTART") {
-            cur.dtstart = val;
-            cur.isAllDay = !val.includes("T");
-          }
-        }
-      }
-      return events;
-    }
-
-    function parseDate(icsDateStr) {
-      if (!icsDateStr) return new Date(NaN);
-      if (icsDateStr.length === 8) {
-        const y = parseInt(icsDateStr.substr(0, 4), 10);
-        const m = parseInt(icsDateStr.substr(4, 2), 10) - 1;
-        const d = parseInt(icsDateStr.substr(6, 2), 10);
-        return new Date(y, m, d);
-      }
-      const y = parseInt(icsDateStr.substr(0, 4), 10);
-      const m = parseInt(icsDateStr.substr(4, 2), 10) - 1;
-      const d = parseInt(icsDateStr.substr(6, 2), 10);
-      const h = parseInt(icsDateStr.substr(9, 2), 10);
-      const min = parseInt(icsDateStr.substr(11, 2), 10);
-      if (icsDateStr.endsWith("Z")) {
-        return new Date(Date.UTC(y, m, d, h, min));
-      }
-      return new Date(y, m, d, h, min);
-    }
 
     async function fetchCalendar() {
       const status = document.getElementById("sync-status");
       if (!config.icsUrl) {
-        status.textContent = "Click ⚙️ Setup to add your Google iCal link";
+        status.textContent = "Click ⚙️ Setup to add your Google Web App URL";
         status.className = "text-amber-400 font-medium";
         renderEmptyBoard();
         return;
@@ -260,20 +170,79 @@
       status.className = "text-slate-400 font-medium";
 
       try {
-        const rawIcs = await fetchWithProxies(config.icsUrl);
-        const parsed = parseICS(rawIcs);
-        populateBoard(parsed);
+        let events = [];
+        if (config.icsUrl.includes("script.google.com")) {
+          const res = await fetch(config.icsUrl);
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          events = data.map(ev => ({
+            title: ev.title,
+            location: ev.location,
+            isAllDay: ev.isAllDay,
+            startDate: new Date(ev.start),
+            user: matchUser(ev.title)
+          }));
+        } else {
+          // Fallback ICS proxy fetch
+          const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(config.icsUrl.replace(/^webcal:\/\//i, "https://"))}`;
+          const res = await fetch(proxyUrl);
+          const text = await res.text();
+          events = parseICS(text);
+        }
+
+        populateBoard(events);
         const now = new Date();
         status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         status.className = "text-emerald-400 font-medium";
       } catch (err) {
         console.error(err);
-        status.textContent = "Sync error (Verify .ics format or access)";
+        status.textContent = "Sync error (Check link access)";
         status.className = "text-rose-400 font-medium";
       }
     }
 
-    function populateBoard(rawEvents) {
+    function parseICS(data) {
+      const events = [];
+      const lines = data.split(/\r\n|\n|\r/);
+      let inEvent = false;
+      let cur = {};
+
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        if (line === "BEGIN:VEVENT") {
+          inEvent = true;
+          cur = {};
+        } else if (line === "END:VEVENT") {
+          if (cur.dtstart && cur.summary) {
+            events.push({
+              title: cur.summary,
+              location: cur.location,
+              isAllDay: !cur.dtstart.includes("T"),
+              startDate: parseDate(cur.dtstart),
+              user: matchUser(cur.summary)
+            });
+          }
+          inEvent = false;
+        } else if (inEvent) {
+          const [keyPart, ...valParts] = line.split(":");
+          const val = valParts.join(":");
+          const key = keyPart.split(";")[0];
+          if (key === "SUMMARY") cur.summary = val.replace(/\\,/g, ",");
+          if (key === "LOCATION") cur.location = val.replace(/\\,/g, ",");
+          if (key === "DTSTART") cur.dtstart = val;
+        }
+      }
+      return events;
+    }
+
+    function parseDate(icsStr) {
+      if (icsStr.length === 8) {
+        return new Date(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2));
+      }
+      return new Date(Date.UTC(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2), icsStr.substr(9,2), icsStr.substr(11,2)));
+    }
+
+    function populateBoard(events) {
       const days = [];
       for (let i = 0; i < 5; i++) {
         const d = new Date();
@@ -282,8 +251,8 @@
         days.push({ date: d, events: [] });
       }
 
-      rawEvents.forEach(ev => {
-        const evDate = parseDate(ev.dtstart);
+      events.forEach(ev => {
+        const evDate = new Date(ev.startDate);
         days.forEach(day => {
           if (
             evDate.getFullYear() === day.date.getFullYear() &&
@@ -291,11 +260,8 @@
             evDate.getDate() === day.date.getDate()
           ) {
             day.events.push({
-              title: ev.summary,
-              location: ev.location,
-              isAllDay: ev.isAllDay,
-              time: ev.isAllDay ? "ALL DAY" : evDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-              user: matchUser(ev.summary)
+              ...ev,
+              time: ev.isAllDay ? "ALL DAY" : evDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
             });
           }
         });
@@ -352,34 +318,7 @@
       });
     }
 
-    function loadSampleEvents() {
-      const days = [];
-      for (let i = 0; i < 5; i++) {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + i);
-        days.push({ date: d, events: [] });
-      }
-
-      days[0].events.push(
-        { title: "Crew 1 - Pavilion Framing & Rafters", location: "McKinney Site", isAllDay: true, time: "ALL DAY", user: matchUser("Crew 1") },
-        { title: "Pickup - Simpson Hardware at Carter Lumber", location: "Carter Lumber Greenfield", isAllDay: false, time: "8:00 AM", user: matchUser("pickup") }
-      );
-      days[1].events.push(
-        { title: "Crew 2 - Composite Decking Install", location: "Carmel Site", isAllDay: true, time: "ALL DAY", user: matchUser("Crew 2") },
-        { title: "Delivery - 6x6 Cedar Posts Arriving", location: "Main Shop", isAllDay: false, time: "1:30 PM", user: matchUser("delivery") }
-      );
-
-      renderBoard(days);
-      toggleModal(false);
-      document.getElementById("sync-status").textContent = "Sample test data loaded";
-      document.getElementById("sync-status").className = "text-sky-400 font-medium";
-    }
-
-    // Auto-refresh every 5 minutes
     setInterval(fetchCalendar, 5 * 60 * 1000);
-
-    // Initial load
     renderLegend();
     fetchCalendar();
   </script>
