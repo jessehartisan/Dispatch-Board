@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Office Crew & Pickup Board</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.5.0/ical.min.js"></script>
+  <style>
+    body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, sans-serif; overflow: hidden; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  </style>
+</head>
+<body class="h-screen flex flex-col p-6">
+
+  <!-- Header -->
+  <header class="flex justify-between items-center pb-4 mb-4 border-b border-slate-700">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-white">CREW & VENDOR DISPATCH</h1>
+      <p id="sync-status" class="text-sm text-amber-400 font-medium">Connecting...</p>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <div id="user-legend" class="flex flex-wrap gap-2 text-sm font-semibold"></div>
+      <div id="clock" class="text-2xl font-mono font-bold text-slate-200 bg-slate-800 px-4 py-2 rounded-lg border border-slate-700">--:--</div>
+      <button onclick="openSettings()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded-lg border border-slate-600 text-sm font-semibold transition">
+        ⚙️ Setup
+      </button>
+    </div>
+  </header>
+
+  <!-- 5-Day Columns -->
+  <main id="board" class="grid grid-cols-5 gap-4 flex-1 overflow-hidden"></main>
+
+  <!-- Setup Modal -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50 p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-xl max-w-2xl w-full p-6 shadow-2xl max-h-[90vh] flex flex-col">
+      <div class="flex justify-between items-center pb-3 border-b border-slate-700 mb-4">
+        <h2 class="text-xl font-bold text-white">Board Configuration</h2>
+        <button onclick="closeSettings()" class="text-slate-400 hover:text-white text-xl font-bold">&times;</button>
+      </div>
+
+      <div class="overflow-y-auto pr-2 space-y-5 flex-1">
+        <div>
+          <label class="block text-sm font-bold text-slate-300 mb-1">Calendar iCal (.ics) URL</label>
+          <input id="ics-input" type="text" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
+            class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-blue-500" />
+          <p class="text-xs text-slate-400 mt-1">Paste your Google Secret iCal link or Outlook published link.</p>
+        </div>
+
+        <div>
+          <div class="flex justify-between items-center mb-2">
+            <label class="block text-sm font-bold text-slate-300">User / Crew Color Rules</label>
+            <button onclick="addUserRow()" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1 rounded font-semibold">+ Add Rule</button>
+          </div>
+          <div id="user-rows" class="space-y-2"></div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-3 pt-4 mt-4 border-t border-slate-700">
+        <button onclick="closeSettings()" class="px-4 py-2 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 text-sm font-semibold">Cancel</button>
+        <button onclick="saveSettings()" class="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold">Save & Sync</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Paste your verified Google Secret iCal link between these quotes as the permanent fallback:
+    const HARDCODED_ICS_URL = "";
+
+    const DEFAULT_USERS = [
+      { name: "Jesse", keywords: "jesse", color: "#3b82f6" },
+      { name: "Crew 1", keywords: "crew 1, crew a, framing", color: "#10b981" },
+      { name: "Crew 2", keywords: "crew 2, crew b, deck", color: "#a855f7" },
+      { name: "Vendor Pickup", keywords: "pickup, pick up, will call, runner", color: "#f97316" },
+      { name: "Delivery", keywords: "delivery, drop off, drop-off", color: "#eab308" }
+    ];
+
+    let appConfig = {
+      icsUrl: HARDCODED_ICS_URL || localStorage.getItem("dispatch_ics_url") || "",
+      users: JSON.parse(localStorage.getItem("dispatch_users") || "null") || DEFAULT_USERS
+    };
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    function renderLegend() {
+      const legend = document.getElementById("user-legend");
+      legend.innerHTML = appConfig.users.map(u => `
+        <span class="flex items-center gap-2 bg-slate-800/90 px-3 py-1 rounded-full border border-slate-700">
+          <span class="w-3 h-3 rounded-full" style="background-color: ${u.color}"></span>
+          <span>${u.name}</span>
+        </span>
+      `).join('');
+    }
+
+    function openSettings() {
+      document.getElementById("ics-input").value = appConfig.icsUrl;
+      const container = document.getElementById("user-rows");
+      container.innerHTML = "";
+      appConfig.users.forEach(u => addUserRow(u.name, u.keywords, u.color));
+      document.getElementById("settings-modal").classList.remove("hidden");
+      document.getElementById("settings-modal").classList.add("flex");
+    }
+
+    function closeSettings() {
+      document.getElementById("settings-modal").classList.add("hidden");
