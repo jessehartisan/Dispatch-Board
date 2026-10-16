@@ -50,9 +50,9 @@
 
       <div class="flex-1 overflow-y-auto space-y-5 pr-2">
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Google Apps Script Web App URL or .ics link</label>
-          <input id="cfg-ics" type="text" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
-          <p class="text-xs text-slate-500 mt-1">Paste your Google Script web app link or direct .ics feed here.</p>
+          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Calendar Feed URL</label>
+          <input id="cfg-url" type="text" placeholder="Paste your Google Apps Script /exec URL or .ics link here" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
+          <p class="text-xs text-slate-500 mt-1">Accepts Google Apps Script web apps (https://script.google.com/.../exec) or .ics feeds.</p>
         </div>
 
         <div>
@@ -81,11 +81,11 @@
       { name: "Joseph", keywords: "joseph", color: "#10b981" },
       { name: "Sam", keywords: "sam", color: "#f43f5e" },
       { name: "Willy", keywords: "willy", color: "#3b82f6" },
-      { name: "84 / Pickup", keywords: "84, p/u, pickup", color: "#d97706" }
+      { name: "84 / Pickup", keywords: "84, p/u, pickup, delivery", color: "#d97706" }
     ];
 
     let config = {
-      icsUrl: localStorage.getItem("dispatch_ics") || "",
+      feedUrl: localStorage.getItem("dispatch_feed_url") || localStorage.getItem("dispatch_ics") || "",
       users: JSON.parse(localStorage.getItem("dispatch_users") || "null") || DEFAULT_USERS
     };
 
@@ -93,234 +93,4 @@
       const now = new Date();
       document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
-    setInterval(updateClock, 1000);
-    updateClock();
-
-    function renderLegend() {
-      const legend = document.getElementById("user-legend");
-      legend.innerHTML = config.users.map(u => `
-        <span class="flex items-center gap-1.5 bg-slate-900/80 px-2.5 py-1 rounded-full border border-slate-800">
-          <span class="w-2.5 h-2.5 rounded-full" style="background-color: ${u.color}"></span>
-          <span class="text-slate-300">${u.name}</span>
-        </span>
-      `).join('');
-    }
-
-    function toggleModal(open) {
-      const modal = document.getElementById("setup-modal");
-      if (open) {
-        document.getElementById("cfg-ics").value = config.icsUrl;
-        renderConfigUsers();
-        modal.classList.remove("hidden");
-      } else {
-        modal.classList.add("hidden");
-      }
-    }
-
-    function renderConfigUsers() {
-      const cont = document.getElementById("cfg-users");
-      cont.innerHTML = config.users.map((u, i) => `
-        <div class="flex items-center gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800">
-          <input type="color" value="${u.color}" onchange="config.users[${i}].color = this.value" class="w-8 h-8 rounded border-0 bg-transparent cursor-pointer" />
-          <input type="text" value="${u.name}" placeholder="Name" onchange="config.users[${i}].name = this.value" class="w-32 bg-slate-900 border border-slate-800 rounded p-1.5 text-xs text-white" />
-          <input type="text" value="${u.keywords}" placeholder="Keywords (comma separated)" onchange="config.users[${i}].keywords = this.value" class="flex-1 bg-slate-900 border border-slate-800 rounded p-1.5 text-xs text-white" />
-          <button onclick="removeUserRow(${i})" class="text-red-400 hover:text-red-300 px-2 text-sm font-bold">&times;</button>
-        </div>
-      `).join('');
-    }
-
-    function addUserRow() {
-      config.users.push({ name: "New Role", keywords: "keyword", color: "#64748b" });
-      renderConfigUsers();
-    }
-
-    function removeUserRow(idx) {
-      config.users.splice(idx, 1);
-      renderConfigUsers();
-    }
-
-    function saveAndSync() {
-      config.icsUrl = document.getElementById("cfg-ics").value.trim();
-      localStorage.setItem("dispatch_ics", config.icsUrl);
-      localStorage.setItem("dispatch_users", JSON.stringify(config.users));
-      renderLegend();
-      toggleModal(false);
-      fetchCalendar();
-    }
-
-    function matchUser(title) {
-      const hay = (title || "").toLowerCase();
-      for (const u of config.users) {
-        const kwList = u.keywords.split(",").map(k => k.trim().toLowerCase()).filter(Boolean);
-        if (kwList.some(k => hay.includes(k))) return u;
-      }
-      return { name: "General", color: "#475569" };
-    }
-
-    async function fetchCalendar() {
-      const status = document.getElementById("sync-status");
-      if (!config.icsUrl) {
-        status.textContent = "Click ⚙️ Setup to add your Google Web App URL";
-        status.className = "text-amber-400 font-medium";
-        renderEmptyBoard();
-        return;
-      }
-
-      status.textContent = "Syncing calendar...";
-      status.className = "text-slate-400 font-medium";
-
-      try {
-        let events = [];
-        if (config.icsUrl.includes("script.google.com")) {
-          const res = await fetch(config.icsUrl);
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-          events = data.map(ev => ({
-            title: ev.title,
-            location: ev.location,
-            isAllDay: ev.isAllDay,
-            startDate: new Date(ev.start),
-            user: matchUser(ev.title)
-          }));
-        } else {
-          // Fallback ICS proxy fetch
-          const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(config.icsUrl.replace(/^webcal:\/\//i, "https://"))}`;
-          const res = await fetch(proxyUrl);
-          const text = await res.text();
-          events = parseICS(text);
-        }
-
-        populateBoard(events);
-        const now = new Date();
-        status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        status.className = "text-emerald-400 font-medium";
-      } catch (err) {
-        console.error(err);
-        status.textContent = "Sync error (Check link access)";
-        status.className = "text-rose-400 font-medium";
-      }
-    }
-
-    function parseICS(data) {
-      const events = [];
-      const lines = data.split(/\r\n|\n|\r/);
-      let inEvent = false;
-      let cur = {};
-
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        if (line === "BEGIN:VEVENT") {
-          inEvent = true;
-          cur = {};
-        } else if (line === "END:VEVENT") {
-          if (cur.dtstart && cur.summary) {
-            events.push({
-              title: cur.summary,
-              location: cur.location,
-              isAllDay: !cur.dtstart.includes("T"),
-              startDate: parseDate(cur.dtstart),
-              user: matchUser(cur.summary)
-            });
-          }
-          inEvent = false;
-        } else if (inEvent) {
-          const [keyPart, ...valParts] = line.split(":");
-          const val = valParts.join(":");
-          const key = keyPart.split(";")[0];
-          if (key === "SUMMARY") cur.summary = val.replace(/\\,/g, ",");
-          if (key === "LOCATION") cur.location = val.replace(/\\,/g, ",");
-          if (key === "DTSTART") cur.dtstart = val;
-        }
-      }
-      return events;
-    }
-
-    function parseDate(icsStr) {
-      if (icsStr.length === 8) {
-        return new Date(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2));
-      }
-      return new Date(Date.UTC(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2), icsStr.substr(9,2), icsStr.substr(11,2)));
-    }
-
-    function populateBoard(events) {
-      const days = [];
-      for (let i = 0; i < 5; i++) {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + i);
-        days.push({ date: d, events: [] });
-      }
-
-      events.forEach(ev => {
-        const evDate = new Date(ev.startDate);
-        days.forEach(day => {
-          if (
-            evDate.getFullYear() === day.date.getFullYear() &&
-            evDate.getMonth() === day.date.getMonth() &&
-            evDate.getDate() === day.date.getDate()
-          ) {
-            day.events.push({
-              ...ev,
-              time: ev.isAllDay ? "ALL DAY" : evDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-            });
-          }
-        });
-      });
-
-      renderBoard(days);
-    }
-
-    function renderEmptyBoard() {
-      const days = [];
-      for (let i = 0; i < 5; i++) {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + i);
-        days.push({ date: d, events: [] });
-      }
-      renderBoard(days);
-    }
-
-    function renderBoard(days) {
-      const board = document.getElementById("board");
-      board.innerHTML = "";
-
-      days.forEach((dayObj, idx) => {
-        const isToday = idx === 0;
-        const dayHeader = dayObj.date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-
-        const col = document.createElement("div");
-        col.className = `flex flex-col rounded-2xl p-4 ${isToday ? 'bg-slate-900 ring-2 ring-blue-500 shadow-xl shadow-blue-500/10' : 'bg-slate-900/60 border border-slate-800/80'} overflow-y-auto`;
-
-        col.innerHTML = `
-          <div class="text-base font-bold pb-3 mb-3 border-b border-slate-800 flex justify-between items-center text-slate-200">
-            <span>${dayHeader}</span>
-            ${isToday ? '<span class="text-[10px] bg-blue-600 text-white font-black px-2 py-0.5 rounded tracking-wider uppercase">Today</span>' : ''}
-          </div>
-          <div class="flex flex-col gap-3">
-            ${dayObj.events.length === 0 ? '<p class="text-slate-600 text-xs italic py-4 text-center">Nothing scheduled</p>' : ''}
-            ${dayObj.events.map(ev => `
-              <div class="p-3 rounded-xl bg-slate-950/90 border border-slate-800/90 shadow-sm" style="border-left: 5px solid ${ev.user.color};">
-                <div class="flex justify-between items-center mb-1.5">
-                  <span class="text-[10px] font-extrabold px-2 py-0.5 rounded text-slate-950 uppercase" style="background-color: ${ev.user.color}">
-                    ${ev.user.name}
-                  </span>
-                  <span class="text-[11px] font-semibold text-slate-400">
-                    ${ev.time}
-                  </span>
-                </div>
-                <div class="text-sm font-semibold text-slate-100 leading-snug">${ev.title}</div>${ev.location ? `<div class="text-xs text-amber-300 mt-1.5 font-medium truncate">📍 ${ev.location}</div>` : ''}
-              </div>
-            `).join('')}
-          </div>
-        `;
-        board.appendChild(col);
-      });
-    }
-
-    setInterval(fetchCalendar, 5 * 60 * 1000);
-    renderLegend();
-    fetchCalendar();
-  </script>
-</body>
-</html>
+    setInterval
