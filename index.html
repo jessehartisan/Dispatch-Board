@@ -158,26 +158,36 @@
     }
 
     async function fetchWithProxies(targetUrl) {
-      const cleanUrl = targetUrl.replace(/^webcal:\/\//i, "https://");
+      let cleanUrl = targetUrl.trim().replace(/^webcal:\/\//i, "https://");
+      
+      // Office365 OWA redirect bypass
+      if (cleanUrl.includes("outlook.office365.com/owa/calendar/")) {
+        cleanUrl = cleanUrl.replace("/owa/calendar/", "/calendar/");
+      }
+
       const proxies = [
         `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`,
+        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`
       ];
 
       for (const p of proxies) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          const timeoutId = setTimeout(() => controller.abort(), 7000);
           const res = await fetch(p, { signal: controller.signal });
           clearTimeout(timeoutId);
           if (res.ok) {
             const txt = await res.text();
-            if (txt && txt.includes("BEGIN:VCALENDAR")) return txt;
+            if (txt && (txt.includes("BEGIN:VCALENDAR") || txt.includes("VEVENT"))) {
+              return txt;
+            }
           }
-        } catch(e) {}
+        } catch(e) {
+          console.warn("Proxy attempt failed:", p, e);
+        }
       }
-      throw new Error("Proxy timeout");
+      throw new Error("Unable to fetch feed");
     }
 
     async function fetchCalendar() {
