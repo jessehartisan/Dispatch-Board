@@ -37,7 +37,7 @@
     </div>
   </header>
 
-  <!-- 5-Day Rolling Columns -->
+  <!-- 5-Day Columns -->
   <main id="board" class="grid grid-cols-5 gap-4 flex-1 overflow-hidden"></main>
 
   <!-- Setup Modal -->
@@ -50,9 +50,9 @@
 
       <div class="flex-1 overflow-y-auto space-y-5 pr-2">
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Calendar Feed URL</label>
-          <input id="cfg-url" type="text" placeholder="https://script.google.com/macros/s/.../exec" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
-          <p class="text-xs text-slate-500 mt-1">Accepts Google Apps Script web apps (/exec) or .ics feeds.</p>
+          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Secret Google Calendar iCal URL (.ics)</label>
+          <input id="cfg-url" type="text" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm text-slate-100 focus:outline-none focus:border-blue-500" />
+          <p class="text-xs text-slate-500 mt-1">Paste your "Secret address in iCal format" from Google Calendar settings.</p>
         </div>
 
         <div>
@@ -65,10 +65,7 @@
       </div>
 
       <div class="pt-4 mt-4 border-t border-slate-800 flex justify-between items-center">
-        <button onclick="loadSampleEvents()" class="text-xs text-slate-400 hover:text-slate-200 underline">
-          Load Sample Data
-        </button>
-        <div class="flex gap-3">
+        <div class="flex gap-3 ml-auto">
           <button onclick="toggleModal(false)" class="px-4 py-2 text-sm text-slate-400 hover:text-white">Cancel</button>
           <button onclick="saveAndSync()" class="px-5 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition shadow-lg shadow-blue-600/30">
             Save &amp; Sync Now
@@ -88,11 +85,10 @@
     ];
 
     let config = {
-      feedUrl: localStorage.getItem("dispatch_feed_url") || localStorage.getItem("dispatch_ics") || "",
+      feedUrl: localStorage.getItem("dispatch_feed_url") || "",
       users: JSON.parse(localStorage.getItem("dispatch_users") || "null") || DEFAULT_USERS
     };
 
-    // Digital Clock
     function updateClock() {
       const now = new Date();
       document.getElementById("clock").textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -100,7 +96,6 @@
     setInterval(updateClock, 1000);
     updateClock();
 
-    // Legend
     function renderLegend() {
       const legend = document.getElementById("user-legend");
       legend.innerHTML = config.users.map(u => `
@@ -111,7 +106,6 @@
       `).join('');
     }
 
-    // Modal Control
     function toggleModal(open) {
       const modal = document.getElementById("setup-modal");
       if (open) {
@@ -146,9 +140,7 @@
     }
 
     function saveAndSync() {
-      let rawUrl = document.getElementById("cfg-url").value.trim();
-      // Automatically sanitize multi-account prefix /u/1/ if present
-      config.feedUrl = rawUrl.replace(/\/u\/\d+\//i, "/");
+      config.feedUrl = document.getElementById("cfg-url").value.trim();
       localStorage.setItem("dispatch_feed_url", config.feedUrl);
       localStorage.setItem("dispatch_users", JSON.stringify(config.users));
       renderLegend();
@@ -165,11 +157,10 @@
       return { name: "General", color: "#475569" };
     }
 
-    // Fetch Logic
     async function fetchCalendar() {
       const status = document.getElementById("sync-status");
       if (!config.feedUrl) {
-        status.textContent = "Click ⚙️ Setup to add your Calendar Feed URL";
+        status.textContent = "Click ⚙️ Setup to add your Google iCal link";
         status.className = "text-amber-400 font-medium";
         renderEmptyBoard();
         return;
@@ -179,43 +170,41 @@
       status.className = "text-slate-400 font-medium";
 
       try {
-        let events = [];
-        const cleanUrl = config.feedUrl.replace(/\/u\/\d+\//i, "/").trim();
+        const targetUrl = config.feedUrl.replace(/^webcal:\/\//i, "https://");
+        
+        // Multi-proxy fallback for fetching the raw iCal feed
+        const proxies = [
+          `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+          `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+          `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+        ];
 
-        if (cleanUrl.includes("script.google.com")) {
-          const res = await fetch(cleanUrl, {
-            method: "GET",
-            redirect: "follow",
-            headers: { "Accept": "application/json" }
-          });
-          
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          const data = await res.json();
-          if (data.error) throw new Error(data.error);
-
-          events = data.map(ev => ({
-            title: ev.title,
-            location: ev.location,
-            isAllDay: ev.isAllDay,
-            startDate: new Date(ev.start),
-            user: matchUser(ev.title)
-          }));
-        } else {
-          // Standard iCal fallback
-          const targetUrl = cleanUrl.replace(/^webcal:\/\//i, "https://");
-          const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
-          const res = await fetch(proxyUrl);
-          const text = await res.text();
-          events = parseICS(text);
+        let rawIcs = "";
+        for (const proxy of proxies) {
+          try {
+            const res = await fetch(proxy);
+            if (res.ok) {
+              const text = await res.text();
+              if (text && text.includes("BEGIN:VCALENDAR")) {
+                rawIcs = text;
+                break;
+              }
+            }
+          } catch(e) {
+            console.warn("Proxy attempt failed:", proxy, e);
+          }
         }
 
+        if (!rawIcs) throw new Error("Could not retrieve calendar data");
+
+        const events = parseICS(rawIcs);
         populateBoard(events);
         const now = new Date();
         status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         status.className = "text-emerald-400 font-medium";
       } catch (err) {
         console.error("Sync Error:", err);
-        status.textContent = `Sync error: ${err.message || "Connection blocked"}`;
+        status.textContent = "Sync error (Verify Secret .ics link)";
         status.className = "text-rose-400 font-medium";
       }
     }
@@ -240,7 +229,7 @@
           if (cur.dtstart && cur.summary) {
             events.push({
               title: cur.summary,
-              location: cur.location,
+              location: cur.location || "",
               isAllDay: !cur.dtstart.includes("T"),
               startDate: parseDate(cur.dtstart),
               user: matchUser(cur.summary)
@@ -248,12 +237,16 @@
           }
           inEvent = false;
         } else if (inEvent) {
-          const [keyPart, ...valParts] = line.split(":");
-          const val = valParts.join(":");
-          const key = keyPart.split(";")[0];
-          if (key === "SUMMARY") cur.summary = val.replace(/\\,/g, ",").replace(/\\;/g, ";");
-          if (key === "LOCATION") cur.location = val.replace(/\\,/g, ",").replace(/\\;/g, ";");
-          if (key === "DTSTART") cur.dtstart = val;
+          const colonIdx = line.indexOf(":");
+          if (colonIdx > -1) {
+            const keyPart = line.substring(0, colonIdx);
+            const val = line.substring(colonIdx + 1);
+            const key = keyPart.split(";")[0];
+
+            if (key === "SUMMARY") cur.summary = val.replace(/\\,/g, ",").replace(/\\;/g, ";");
+            if (key === "LOCATION") cur.location = val.replace(/\\,/g, ",").replace(/\\;/g, ";");
+            if (key === "DTSTART") cur.dtstart = val;
+          }
         }
       }
       return events;
@@ -264,7 +257,13 @@
       if (icsStr.length === 8) {
         return new Date(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2));
       }
-      return new Date(Date.UTC(icsStr.substr(0,4), parseInt(icsStr.substr(4,2))-1, icsStr.substr(6,2), icsStr.substr(9,2), icsStr.substr(11,2)));
+      return new Date(Date.UTC(
+        parseInt(icsStr.substr(0,4)),
+        parseInt(icsStr.substr(4,2))-1,
+        parseInt(icsStr.substr(6,2)),
+        parseInt(icsStr.substr(9,2) || 0),
+        parseInt(icsStr.substr(11,2) || 0)
+      ));
     }
 
     function populateBoard(events) {
@@ -343,37 +342,7 @@
       });
     }
 
-    function loadSampleEvents() {
-      const days = [];
-      for (let i = 0; i < 5; i++) {
-        const d = new Date();
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + i);
-        days.push({ date: d, events: [] });
-      }
-
-      days[0].events.push(
-        { title: "Joe - Christie", location: "", isAllDay: true, time: "ALL DAY", user: matchUser("Joe") },
-        { title: "Joseph - Bower", location: "", isAllDay: true, time: "ALL DAY", user: matchUser("Joseph") },
-        { title: "Sam - Kovach", location: "", isAllDay: true, time: "ALL DAY", user: matchUser("Sam") },
-        { title: "Willy - Schultz", location: "", isAllDay: true, time: "ALL DAY", user: matchUser("Willy") },
-        { title: "84 - Bower", location: "84 Lumber", isAllDay: false, time: "1:00 PM", user: matchUser("84") }
-      );
-
-      days[3].events.push(
-        { title: "84 - Christie", location: "84 Lumber", isAllDay: false, time: "1:00 PM", user: matchUser("84") }
-      );
-
-      renderBoard(days);
-      toggleModal(false);
-      document.getElementById("sync-status").textContent = "Sample test data loaded";
-      document.getElementById("sync-status").className = "text-sky-400 font-medium";
-    }
-
-    // Auto-refresh every 5 minutes
     setInterval(fetchCalendar, 5 * 60 * 1000);
-
-    // Initial load
     renderLegend();
     fetchCalendar();
   </script>
