@@ -50,9 +50,9 @@
 
       <div class="flex-1 overflow-y-auto space-y-5 pr-2">
         <div>
-          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Google Calendar Secret iCal URL(s)</label>
-          <textarea id="cfg-url" rows="3" placeholder="Paste your Secret address in iCal format here (one per line if multiple)" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-100 focus:outline-none focus:border-blue-500"></textarea>
-          <p class="text-xs text-slate-500 mt-1">If you have both a Crew calendar and an Outlook/Vendor calendar, paste both here (one per line).</p>
+          <label class="block text-xs font-bold text-slate-300 uppercase mb-2">Calendar Feed URL(s)</label>
+          <textarea id="cfg-url" rows="4" placeholder="Paste your Google Calendar Secret .ics link on Line 1&#10;Paste your Outlook / Vendor .ics link on Line 2" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-100 focus:outline-none focus:border-blue-500"></textarea>
+          <p class="text-xs text-slate-500 mt-1">One URL per line. Feeds sync concurrently without blocking each other.</p>
         </div>
 
         <div>
@@ -85,7 +85,7 @@
     ];
 
     let config = {
-      feedUrl: localStorage.getItem("dispatch_feed_url") || "",
+      feedUrl: localStorage.getItem("dispatch_feed_url") || localStorage.getItem("dispatch_ics") || "",
       users: JSON.parse(localStorage.getItem("dispatch_users") || "null") || DEFAULT_USERS
     };
 
@@ -160,74 +160,75 @@
     async function fetchWithProxies(targetUrl) {
       let cleanUrl = targetUrl.trim().replace(/^webcal:\/\//i, "https://");
       
-      // Office365 OWA redirect bypass
       if (cleanUrl.includes("outlook.office365.com/owa/calendar/")) {
-        cleanUrl = cleanUrl.replace("/owa/calendar/", "/calendar/");
+        cleanUrl = cleanUrl.replace("/owa/calendar/", "/calendar/reach/");
       }
 
       const proxies = [
         `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`
+        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`,
+        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`
       ];
 
       for (const p of proxies) {
         try {
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 7000);
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
           const res = await fetch(p, { signal: controller.signal });
           clearTimeout(timeoutId);
           if (res.ok) {
             const txt = await res.text();
-            if (txt && (txt.includes("BEGIN:VCALENDAR") || txt.includes("VEVENT"))) {
+            if (txt && (txt.includes("BEGIN:VCALENDAR") || txt.includes("BEGIN:VEVENT"))) {
               return txt;
             }
           }
-        } catch(e) {
-          console.warn("Proxy attempt failed:", p, e);
-        }
+        } catch(e) {}
       }
-      throw new Error("Unable to fetch feed");
+      throw new Error("Proxy timeout");
     }
 
     async function fetchCalendar() {
       const status = document.getElementById("sync-status");
       if (!config.feedUrl) {
-        status.textContent = "Click ⚙️ Setup to add your Google iCal link";
+        status.textContent = "Click ⚙️ Setup to add your Calendar Feed URL(s)";
         status.className = "text-amber-400 font-medium";
         renderEmptyBoard();
         return;
       }
 
-      status.textContent = "Syncing calendar...";
+      status.textContent = "Syncing calendars...";
       status.className = "text-slate-400 font-medium";
 
-      try {
-        const urls = config.feedUrl.split(/\n|,/).map(u => u.trim()).filter(Boolean);
-        let combinedEvents = [];
+      const urls = config.feedUrl.split(/\n|,/).map(u => u.trim()).filter(Boolean);
+      let combinedEvents = [];
+      let successCount = 0;
+      let failedFeeds = [];
 
-        for (const u of urls) {
-          try {
-            const rawIcs = await fetchWithProxies(u);
-            const events = parseICS(rawIcs);
-            combinedEvents = combinedEvents.concat(events);
-          } catch(err) {
-            console.warn("Feed fetch failed:", u, err);
-          }
+      for (const u of urls) {
+        try {
+          const rawIcs = await fetchWithProxies(u);
+          const events = parseICS(rawIcs);
+          combinedEvents = combinedEvents.concat(events);
+          successCount++;
+        } catch(err) {
+          console.warn("Feed fetch failed:", u, err);
+          failedFeeds.push(u);
         }
+      }
 
-        if (combinedEvents.length === 0) {
-          throw new Error("Failed to fetch feeds");
-        }
-
+      if (combinedEvents.length > 0) {
         populateBoard(combinedEvents);
         const now = new Date();
-        status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        status.className = "text-emerald-400 font-medium";
-      } catch (err) {
-        console.error("Sync Error:", err);
-        status.textContent = `Sync warning (${err.message}). Retrying...`;
-        status.className = "text-amber-400 font-medium";
+        if (failedFeeds.length > 0) {
+          status.textContent = `Synced (${successCount}/${urls.length} feeds): ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+          status.className = "text-amber-400 font-medium";
+        } else {
+          status.textContent = `Synced: ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+          status.className = "text-emerald-400 font-medium";
+        }
+      } else {
+        status.textContent = "Sync warning: All feeds unreachable. Retrying...";
+        status.className = "text-rose-400 font-medium";
       }
     }
 
@@ -276,16 +277,14 @@
 
     function parseDate(icsStr) {
       if (!icsStr) return new Date(NaN);
-      // All day date: YYYYMMDD
       if (icsStr.length === 8) {
         return new Date(
           parseInt(icsStr.substr(0,4)),
           parseInt(icsStr.substr(4,2)) - 1,
           parseInt(icsStr.substr(6,2)),
-          12, 0, 0 // Anchor midday to prevent date rolling backwards
+          12, 0, 0
         );
       }
-      // Timed date
       const y = parseInt(icsStr.substr(0,4));
       const m = parseInt(icsStr.substr(4,2)) - 1;
       const d = parseInt(icsStr.substr(6,2));
