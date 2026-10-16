@@ -160,28 +160,36 @@
       }
       return { name: "General", color: "#475569" };
     }
-
-    // CORS Proxies
+    
+    // Robust CORS Proxies
     async function fetchWithProxies(targetUrl) {
-      const cleanUrl = targetUrl.replace(/^webcal:\/\//i, "https://");
+      let cleanUrl = targetUrl.trim().replace(/^webcal:\/\//i, "https://");
+      
       const proxies = [
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(cleanUrl)}`,
-        `https://corsproxy.io/?url=${encodeURIComponent(cleanUrl)}`,
-        `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(cleanUrl)}`
+        (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+        (u) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+        (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+        (u) => `https://thingproxy.freeboard.io/fetch/${u}`,
+        (u) => `https://cors-anywhere.herokuapp.com/${u}`
       ];
 
-      for (const proxy of proxies) {
+      let lastError = null;
+      for (const getProxyUrl of proxies) {
         try {
-          const res = await fetch(proxy);
+          const proxyUrl = getProxyUrl(cleanUrl);
+          const res = await fetch(proxyUrl);
           if (res.ok) {
             const text = await res.text();
-            if (text.includes("BEGIN:VCALENDAR")) return text;
+            if (text && text.includes("BEGIN:VCALENDAR")) {
+              return text;
+            }
           }
         } catch (e) {
-          console.warn("Proxy attempt failed:", proxy, e);
+          lastError = e;
+          console.warn("Proxy attempt failed:", e);
         }
       }
-      throw new Error("Unable to fetch iCal feed through proxy rotation.");
+      throw lastError || new Error("Unable to fetch iCal feed through proxy rotation.");
     }
 
     // Basic ICS Parser
